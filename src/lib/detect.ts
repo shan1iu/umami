@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { browserName, detectOS } from 'detect-browser';
 import ipaddr from 'ipaddr.js';
@@ -8,6 +9,7 @@ import { getIpAddress, stripPort } from '@/lib/ip';
 import { safeDecodeURIComponent } from '@/lib/url';
 
 const MAXMIND = 'maxmind';
+const MAXMIND_INIT_FAILED = 'maxmind-init-failed';
 
 const PROVIDER_HEADERS = [
   // Cloudflare headers
@@ -84,12 +86,27 @@ export async function getLocation(ip: string = '', headers: Headers, hasPayloadI
   }
 
   // Database lookup
-  if (!globalThis[MAXMIND]) {
-    const dir = path.join(process.cwd(), 'geo');
+  if (!globalThis[MAXMIND] && !globalThis[MAXMIND_INIT_FAILED]) {
+    const cwd = process.cwd();
+    const locations = [
+      process.env.GEOLITE_DB_PATH,
+      path.resolve(cwd, 'geo', 'GeoLite2-City.mmdb'),
+      path.resolve(cwd, 'node_modules', '.geo', 'GeoLite2-City.mmdb'),
+    ].filter(Boolean) as string[];
 
-    globalThis[MAXMIND] = await maxmind.open(
-      process.env.GEOLITE_DB_PATH || path.resolve(dir, 'GeoLite2-City.mmdb'),
-    );
+    const dbPath = locations.find(filePath => fs.existsSync(filePath));
+
+    if (!dbPath) {
+      globalThis[MAXMIND_INIT_FAILED] = true;
+      return null;
+    }
+
+    try {
+      globalThis[MAXMIND] = await maxmind.open(dbPath);
+    } catch {
+      globalThis[MAXMIND_INIT_FAILED] = true;
+      return null;
+    }
   }
 
   const result = globalThis[MAXMIND]?.get(stripPort(ip));
